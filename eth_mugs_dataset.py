@@ -29,11 +29,21 @@ class ETHMugsDataset(Dataset):
 
         # TODO: get image and mask paths
         self.rgb_dir = os.path.join(self.root_dir, "rgb")
-        self.mask_dir = []
-        self.image_paths = []
+        self.mask_dir = os.path.join(self.root_dir, "masks")
+        self.image_paths = sorted(os.listdir(self.rgb_dir))
+
+        if mode == "train":
+            self.image_paths = [img for img in self.image_paths if img.endswith(".jpg")]
+        # In val mode, only include the validation set
+        elif mode == "val":
+            self.image_paths = [img for img in self.image_paths if img.endswith(".jpg")]
 
         # TODO: set image transforms - these transforms will be applied to pre-process the data before passing it through the model
-        self.transform = None  # TO-DO
+        self.transform = transforms.Compose([
+            transforms.Resize(IMAGE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
         print("[INFO] Dataset mode:", mode)
         print(
@@ -47,6 +57,19 @@ class ETHMugsDataset(Dataset):
     def __getitem__(self, idx: int):
         """Get an item from the dataset."""
         # TODO: load image and gt mask (unless when in test mode), apply transforms if necessary
-        image = None
-        mask = None
-        return image, mask
+        # Load image
+        img_name = self.image_paths[idx]
+        img_path = os.path.join(self.rgb_dir, img_name)
+        image = Image.open(img_path).convert("RGB")
+        # Apply transformations
+        image = self.transform(image)
+
+        # Load mask (if not in test mode)
+        if self.mode != "test":
+            mask_name = img_name.replace("_rgb.jpg", "_mask.png")  # Assuming mask file names are similar to image file names
+            mask_path = os.path.join(self.mask_dir, mask_name)
+            mask = load_mask(mask_path)  # Implement load_mask function according to your needs
+            mask = torch.as_tensor(mask, dtype=torch.float32)
+            return image, mask
+        else:
+            return image
