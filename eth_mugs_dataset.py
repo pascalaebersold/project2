@@ -45,9 +45,9 @@ class ETHMugsDataset(Dataset):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-        print("[INFO] Dataset mode:", mode)
+        print("[INFO]: Dataset mode:", mode)
         print(
-            "[INFO] Number of images in the ETHMugDataset: {}".format(len(self.image_paths))
+            "[INFO]: Number of images in the ETHMugDataset: {}".format(len(self.image_paths))
         )
 
     def __len__(self):

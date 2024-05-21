@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from eth_mugs_dataset import ETHMugsDataset
-from train import build_model
+from train_old import build_model
 from utils import IMAGE_SIZE, load_mask, compute_iou
 
 
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     # Build Model
-    # model = build_model(...)
+    model = build_model()
 
     # Load pre-trained model
     print(f"[INFO]: Loading the pre-trained model: {args.ckpt}")
@@ -71,10 +71,10 @@ if __name__ == "__main__":
             test_image = test_image.to(device)
 
             # TODO: Forward pass
-            # test_output = model(test_image)
+            test_output = model(test_image)
 
             # Save the predicted mask
-            resized_pred_mask = Image.fromarray(test_output.cpu().numpy())
+            resized_pred_mask = Image.fromarray(test_output.cpu().detach().numpy().astype(int).squeeze())
             resized_pred_mask.save(
                 os.path.join(out_dir, str(i).zfill(4) + "_mask.png")
             )

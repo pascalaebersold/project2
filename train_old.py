@@ -7,6 +7,7 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 
 from torch.utils.data import DataLoader
@@ -19,30 +20,25 @@ import matplotlib.pyplot as plt
 
 # TODO: Add your model definition here
 class build_model(nn.Module):  
-    def __init__(self, num_classes=4):
+    def __init__(self, num_classes=1):
         super(build_model, self).__init__()
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),  # Doubled features
-            nn.LeakyReLU(inplace=True),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),  # Doubled features
-            nn.LeakyReLU(inplace=True),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),  # Doubled features
-            nn.LeakyReLU(inplace=True),
-            nn.MaxPool2d(2, 2)
-        )
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
         self.dropout = nn.Dropout(0.2)
-        self.fc1 = nn.Linear(128 * 31 * 47, 1024)  # Adjusted for correct dimensions and doubled features
-        self.fc2 = nn.Linear(1024, num_classes * 252 * 378)
+        self.fc1 = nn.Linear(128 * 47 * 31, 512)
+        self.fc2 = nn.Linear(512, num_classes * 252 * 378)
 
     def forward(self, x):
-        x = self.conv_layers(x)
-        x = x.view(-1, 128 * 31 * 47)
+        x = self.pool(nn.functional.relu(self.conv1(x)))
+        x = self.pool(nn.functional.relu(self.conv2(x)))
+        x = self.pool(nn.functional.relu(self.conv3(x)))
+        x = x.view(-1, 128 * 47 * 31)
         x = self.dropout(x)
-        x = nn.functional.leaky_relu(self.fc1(x))
+        x = nn.functional.sigmoid(self.fc1(x))
         x = self.fc2(x)
-        x = x.view(-1, 4, 252, 378)
+        x = x.view(-1, 252, 378)
         return x
 
 
@@ -56,12 +52,12 @@ def train(
     log_frequency = 10
     val_batch_size = 1
 
-    val_frequency = 1
+    val_frequency = 5
 
     # TODO: Set your own values for the hyperparameters
     num_epochs = 200
     lr = 0.001
-    train_batch_size = 4
+    train_batch_size = 6
     # val_batch_size = 1
     # ...
 
@@ -82,19 +78,19 @@ def train(
     val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, pin_memory=True)
 
     # TODO: Define you own model
-    model = build_model(num_classes=4)
+    model = build_model(num_classes=1)
     model.to(device)
 
     # TODO: Define Loss function
     #criterion = nn.CrossEntropyLoss()
-    weight = torch.tensor([10.0], device=device)
+    weight = torch.tensor([2.0], device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=weight)
 
     # TODO: Define Optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     # TODO: Define Learning rate scheduler if needed
-    # lr_scheduler = ...
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 
     # TODO: Write the training loop!
     print("[INFO]: Starting training...")
@@ -103,57 +99,78 @@ def train(
 
         for batch_idx, (image, gt_mask) in enumerate(train_dataloader):
             image = image.to(device)
-            gt_mask = gt_mask.to(device).long()
+            gt_mask = gt_mask.to(device)
 
             optimizer.zero_grad()
 
             # Forward pass
             output = model(image)
-            gt_mask_one_hot = nn.functional.one_hot(gt_mask, num_classes=4).permute(0, 3, 1, 2).float()
-            loss = criterion(output, gt_mask_one_hot)
+            loss = criterion(output, gt_mask)
 
             # Backward pass
             loss.backward()
             optimizer.step()
-            # lr_scheduler.step()
 
             if batch_idx % log_frequency == 0:
                 print(f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item()}")
 
+        lr_scheduler.step()
+
         # Save model
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"epoch_{epoch}.pth"))
 
-        if (epoch + 1) % val_frequency == 0:
-                    model.eval()
-                    val_iou = 0.0
+        if epoch % val_frequency == 0:
+            model.eval()
 
-                    with torch.no_grad():
-                        for val_image, val_gt_mask in val_dataloader:
-                            val_image, val_gt_mask = val_image.to(device), val_gt_mask.to(device)
-                            val_output = model(val_image)
-                            val_output = torch.argmax(val_output, dim=1)  # Convert output to class predictions
+            val_iou = 0.0
+            with torch.no_grad():
+                for val_image, val_gt_mask in val_dataloader:
+                    val_image = val_image.to(device)
+                    val_gt_mask = val_gt_mask.to(device)
 
-                            val_iou += compute_iou(val_output.cpu().numpy().squeeze(), val_gt_mask.cpu().numpy().squeeze())
+                    # Forward pass
+                    val_output = model(val_image)
+                    
+                    val_output = (val_output>0.0025).float()
+                    
+                    mask = val_gt_mask.squeeze().cpu().numpy()
+                    o = val_output.squeeze().cpu().numpy()
+                    val_output = val_output.cpu().detach().numpy().astype(int)
+                    val_gt_mask = val_gt_mask.cpu().detach().numpy().astype(int)
 
-                        val_iou = (val_iou / len(val_dataloader)) * 100
-                        print(f"[INFO]: Validation IoU: {val_iou:.2f}")
+                    # Convert tensor to PIL Image
+                    image = val_image.squeeze().permute(1,2,0)
+                    image = image.cpu().numpy()
+                    #o = TF.to_pil_image(val_output.squeeze())
+                    #mask = TF.to_pil_image(val_gt_mask.squeeze())
 
-                        fig, axes = plt.subplots(1, 3, figsize=(12, 3))
-                        image = val_image.squeeze().permute(1, 2, 0).cpu().numpy()
-                        mask = val_gt_mask.squeeze().cpu().numpy()
-                        output = val_output.squeeze().cpu().numpy()
+                    val_iou += compute_iou(val_output, val_gt_mask)
 
-                        axes[0].imshow(mask, cmap='gray')
-                        axes[0].axis("off")
-                        axes[0].set_title("Mask")
-                        axes[1].imshow(image)
-                        axes[1].axis("off")
-                        axes[1].set_title("Image")
-                        axes[2].imshow(output, cmap='tab10')  # Using a colormap to show different classes
-                        axes[2].axis("off")
-                        axes[2].set_title("Output")
-                        plt.show()
-                        input()
+                val_iou /= len(val_dataloader)
+
+                val_iou *= 100
+
+                print(f"[INFO]: Validation IoU: {val_iou.item():.2f}")
+
+                fig, axes = plt.subplots(1, 3, figsize=(12,3))
+
+                #print(o)
+                #print(mask)
+                axes[0].imshow(mask, cmap='gray')
+                axes[0].axis("off")
+                axes[0].set_title("Mask")
+
+                axes[1].imshow(image)
+                axes[1].axis("off")
+                axes[1].set_title("Image")
+
+                axes[2].imshow(o, cmap='gray')
+                axes[2].axis("off")
+                axes[2].set_title("Output")
+
+                plt.show()
+
+                input()
 
 
 if __name__ == "__main__":

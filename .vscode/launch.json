@@ -5,11 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
+            "name": "Python Debugger: train",
             "type": "debugpy",
             "request": "launch",
-            "program": "${train.py}",
+            "program": "${file}",
             "args": ["--data_root", "datasets", "--ckpt_dir", "checkpoints"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "args": ["--data_root", "datasets", "--split", "public_test", "--ckpt", "checkpoints/2024-05-13-20-33-41/epoch_199.pth"],
             "console": "integratedTerminal"
         }
     ]
