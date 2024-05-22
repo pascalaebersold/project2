@@ -90,7 +90,7 @@ class UNet(nn.Module):
 def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     """Train function."""
     log_frequency = 1140000
-    val_frequency = 10
+    val_frequency = 5
 
     num_epochs = 200
     lr = 0.0001
@@ -140,8 +140,8 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
             epoch_loss += loss.item()
 
-            if batch_idx % log_frequency == 0:
-                print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()}")
+            #if batch_idx % log_frequency == 0:
+                #print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()}")
 
         scheduler.step()
 
@@ -157,9 +157,16 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                     val_image, val_gt_mask = val_image.to(device), val_gt_mask.to(device)
                     val_output = model(val_image)
                     val_output = nn.functional.interpolate(val_output, size=(252, 378), mode='bilinear', align_corners=False)
-                    val_output = torch.argmax(val_output, dim=1) # take the maximum value of the 4 Matrixes and put it in a new one to reduce to one dim.
-                    val_output = torch.sigmoid(val_output)  # Apply sigmoid to the output
-                    val_output = (val_output > 0.9).float()  # Threshold to obtain binary mask
+                    #val_output = torch.argmax(val_output, dim=1, keepdim=True) # take the maximum value of the 4 Matrixes and put it in a new one to reduce to one dim.
+                    # Get the top 2 channels for each pixel
+                    top2_vals, top2_indices = torch.topk(val_output, 2, dim=1)
+                    
+                    # Combine the top 2 channels using their values
+                    val_output = (top2_vals[:, 0, :, :] + top2_vals[:, 1, :, :]) / 2.0
+                    
+                    val_output = torch.sigmoid(val_output.float())  # Apply sigmoid to the output
+                    encoder_shades2 = val_output
+                    val_output = (val_output > 0.4).float()  # Threshold to obtain binary mask
                     
                     # Ensure consistent binary mask (Forground and Background were inverted)
                     if val_output.mean() > 0.5:  # If more than half of the values are 1
@@ -172,10 +179,11 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 print(f"[INFO]: Validation IoU: {val_iou:.2f}")
 
                 # Visualization
-                fig, axes = plt.subplots(1, 3, figsize=(12, 3))
+                fig, axes = plt.subplots(1, 4, figsize=(12, 3))
                 image = val_image.squeeze().permute(1, 2, 0).cpu().numpy()
                 mask = val_gt_mask.squeeze().cpu().numpy()
                 output = val_output.squeeze().cpu().numpy()
+                encoder_shades2 = encoder_shades2.squeeze().cpu().numpy()
 
                 axes[0].imshow(mask, cmap='gray')
                 axes[0].axis("off")
@@ -186,6 +194,9 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 axes[2].imshow(output, cmap='gray')
                 axes[2].axis("off")
                 axes[2].set_title("Output")
+                axes[3].imshow(encoder_shades2, cmap='tab10')
+                axes[3].axis("off")
+                axes[3].set_title("Shades")
                 plt.show()
                 input()
 

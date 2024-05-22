@@ -38,11 +38,10 @@ class ETHMugsDataset(Dataset):
         elif mode == "val":
             self.image_paths = [img for img in self.image_paths if img.endswith(".jpg")]
 
-        # TODO: set image transforms - these transforms will be applied to pre-process the data before passing it through the model
+        # TODO: set image transforms - these transforms will be applied to pre-process the data before passing it through the model transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.transform = transforms.Compose([
             transforms.Resize(IMAGE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.ToTensor()
         ])
 
         print("[INFO]: Dataset mode:", mode)
