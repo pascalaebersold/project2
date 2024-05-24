@@ -42,7 +42,7 @@ def load_mask(mask_path):
     """
     mask = np.asarray(Image.open(mask_path)).astype(int)
     if mask.max() > 1:
-        mask = mask // 255
+        mask = mask / 255
     return mask
 
 

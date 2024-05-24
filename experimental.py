@@ -89,8 +89,8 @@ class UNet(nn.Module):
 
 def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     """Train function."""
-    log_frequency = 1140000
-    val_frequency = 5
+    #log_frequency = 1
+    val_frequency = 1
 
     num_epochs = 200
     lr = 0.0001
@@ -107,12 +107,12 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     train_dataset = ETHMugsDataset(root_dir=train_data_root, mode='train')
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True)
     val_dataset = ETHMugsDataset(root_dir=val_data_root, mode='val')
-    val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, pin_memory=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=True, pin_memory=True)
 
     model = UNet(num_classes=4)
     model.to(device)
 
-    weight = torch.tensor([10.0], device=device)
+    weight = torch.tensor([5.0], device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=weight)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
@@ -133,6 +133,7 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
             #print(gt_mask.shape, type(gt_mask))
             #output = (output>0.25).float()
             #gt_mask = gt_mask.unsqueeze(1).float()
+
             loss = criterion(torch.mean(output, dim=1), gt_mask)
 
             loss.backward()
@@ -142,6 +143,7 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
             #if batch_idx % log_frequency == 0:
                 #print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()}")
+
 
         scheduler.step()
 
@@ -159,14 +161,15 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                     val_output = nn.functional.interpolate(val_output, size=(252, 378), mode='bilinear', align_corners=False)
                     #val_output = torch.argmax(val_output, dim=1, keepdim=True) # take the maximum value of the 4 Matrixes and put it in a new one to reduce to one dim.
                     # Get the top 2 channels for each pixel
+                    o = val_output
+
                     top2_vals, top2_indices = torch.topk(val_output, 2, dim=1)
-                    
                     # Combine the top 2 channels using their values
                     val_output = (top2_vals[:, 0, :, :] + top2_vals[:, 1, :, :]) / 2.0
                     
                     val_output = torch.sigmoid(val_output.float())  # Apply sigmoid to the output
                     encoder_shades2 = val_output
-                    val_output = (val_output > 0.4).float()  # Threshold to obtain binary mask
+                    val_output = (val_output > 0.7).float()  # Threshold to obtain binary mask
                     
                     # Ensure consistent binary mask (Forground and Background were inverted)
                     if val_output.mean() > 0.5:  # If more than half of the values are 1
@@ -179,24 +182,38 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 print(f"[INFO]: Validation IoU: {val_iou:.2f}")
 
                 # Visualization
-                fig, axes = plt.subplots(1, 4, figsize=(12, 3))
+                fig, axes = plt.subplots(2, 4, figsize=(12, 3))
                 image = val_image.squeeze().permute(1, 2, 0).cpu().numpy()
                 mask = val_gt_mask.squeeze().cpu().numpy()
                 output = val_output.squeeze().cpu().numpy()
+                o = o.squeeze().cpu().numpy()
                 encoder_shades2 = encoder_shades2.squeeze().cpu().numpy()
 
-                axes[0].imshow(mask, cmap='gray')
-                axes[0].axis("off")
-                axes[0].set_title("Mask")
-                axes[1].imshow(image)
-                axes[1].axis("off")
-                axes[1].set_title("Image")
-                axes[2].imshow(output, cmap='gray')
-                axes[2].axis("off")
-                axes[2].set_title("Output")
-                axes[3].imshow(encoder_shades2, cmap='tab10')
-                axes[3].axis("off")
-                axes[3].set_title("Shades")
+                axes[0,0].imshow(mask, cmap='gray')
+                axes[0,0].axis("off")
+                axes[0,0].set_title("Mask")
+                axes[0,1].imshow(image)
+                axes[0,1].axis("off")
+                axes[0,1].set_title("Image")
+                axes[0,2].imshow(output, cmap='gray')
+                axes[0,2].axis("off")
+                axes[0,2].set_title("Output")
+                axes[0,3].imshow(encoder_shades2, cmap='tab10')
+                axes[0,3].axis("off")
+                axes[0,3].set_title("Shades")
+
+                axes[1,0].imshow(o[0,:,:], cmap='gray')
+                axes[1,0].axis("off")
+                axes[1,0].set_title("o0")
+                axes[1,1].imshow(o[1,:,:], cmap='gray')
+                axes[1,1].axis("off")
+                axes[1,1].set_title("o1")
+                axes[1,2].imshow(o[2,:,:], cmap='gray')
+                axes[1,2].axis("off")
+                axes[1,2].set_title("o2")
+                axes[1,3].imshow(o[3,:,:], cmap='gray')
+                axes[1,3].axis("off")
+                axes[1,3].set_title("o3")
                 plt.show()
                 input()
 

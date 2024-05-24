@@ -68,7 +68,8 @@ class ETHMugsDataset(Dataset):
             mask_name = img_name.replace("_rgb.jpg", "_mask.png")  # Assuming mask file names are similar to image file names
             mask_path = os.path.join(self.mask_dir, mask_name)
             mask = load_mask(mask_path)  # Implement load_mask function according to your needs
-            mask = torch.as_tensor(mask, dtype=torch.float32)
+            mask = torch.as_tensor(mask, dtype=torch.float)
+            mask = (mask > 0.3).float() # Mask IS NOT BOOL WHAT THE FUCK round gray scales to 1.0
             return image, mask
         else:
             return image

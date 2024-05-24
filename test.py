@@ -12,6 +12,9 @@ from eth_mugs_dataset import ETHMugsDataset
 from experimental import UNet
 from utils import IMAGE_SIZE, load_mask, compute_iou
 
+import numpy as np
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SML Project 2.")
@@ -74,11 +77,25 @@ if __name__ == "__main__":
             test_output = model(test_image)
 
             # Save the predicted mask
-            print(test_output.shape)
-            resized_pred_mask = Image.fromarray(test_output.cpu().detach().numpy().astype(int).squeeze())
-            resized_pred_mask.save(
-                os.path.join(out_dir, str(i).zfill(4) + "_mask.png")
-            )
+            test_output = F.interpolate(test_output, size=(252, 378), mode='bilinear', align_corners=False)
+            top2_vals, top2_indices = torch.topk(test_output, 2, dim=1)
+
+            # Combine the top 2 channels using their values
+            test_output = (top2_vals[:, 0, :, :] + top2_vals[:, 1, :, :]) / 2.0
+            
+            test_output = torch.sigmoid(test_output.float())  # Apply sigmoid to the output
+            
+            encoder_shades2 = test_output
+            test_output = (test_output > 0.5).float()  # Threshold to obtain binary mask
+            
+            # Ensure consistent binary mask (Forground and Background were inverted)
+            if test_output.mean() > 0.5:  # If more than half of the values are 1
+                test_output = 1 - test_output  # Invert the mask
+
+            test_output = test_output.cpu().detach().numpy().squeeze().astype(np.uint8) * 255
+            
+            resized_pred_mask = Image.fromarray(test_output, mode='L') # L for grayscale mode
+            resized_pred_mask.save(os.path.join(out_dir, str(i).zfill(4) + "_mask.png"))
 
     # Run evaluation if using public test split
     if args.split == "public_test":
