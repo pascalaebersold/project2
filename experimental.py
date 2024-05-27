@@ -15,6 +15,17 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(DepthwiseSeparableConv, self).__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, groups=in_channels)
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
+
 class UNet(nn.Module):
     def __init__(self, num_classes):
         super(UNet, self).__init__()
@@ -22,9 +33,12 @@ class UNet(nn.Module):
         self.encoder2 = self.conv_block(64, 128)
         self.encoder3 = self.conv_block(128, 256)
         self.encoder4 = self.conv_block(256, 512)
+        self.encoder5 = self.conv_block(512, 1024)
 
-        self.bottleneck = self.conv_block(512, 1024)
+        self.bottleneck = self.conv_block(1024, 2048)
 
+        self.up_conv5 = self.up_conv(2048, 1024)
+        self.decoder5 = self.conv_block(2048, 1024)
         self.up_conv4 = self.up_conv(1024, 512)
         self.decoder4 = self.conv_block(1024, 512)
         self.up_conv3 = self.up_conv(512, 256)
@@ -38,12 +52,15 @@ class UNet(nn.Module):
 
     def conv_block(self, in_channels, out_channels):
         return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            DepthwiseSeparableConv(in_channels, out_channels),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            DepthwiseSeparableConv(out_channels, out_channels),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True)
+            nn.ReLU(inplace=True),
+            DepthwiseSeparableConv(out_channels, out_channels),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
         )
 
     def up_conv(self, in_channels, out_channels):
@@ -55,12 +72,17 @@ class UNet(nn.Module):
         enc2 = self.encoder2(self.maxpool(enc1))
         enc3 = self.encoder3(self.maxpool(enc2))
         enc4 = self.encoder4(self.maxpool(enc3))
+        enc5 = self.encoder5(self.maxpool(enc4))
 
         # Bottleneck
-        bottleneck = self.bottleneck(self.maxpool(enc4))
+        bottleneck = self.bottleneck(self.maxpool(enc5))
 
         # Decoder
-        dec4 = self.up_conv4(bottleneck)
+        dec5 = self.up_conv5(bottleneck)
+        dec5 = self.crop_and_concat(enc5, dec5)
+        dec5 = self.decoder5(dec5)
+
+        dec4 = self.up_conv4(dec5)
         dec4 = self.crop_and_concat(enc4, dec4)
         dec4 = self.decoder4(dec4)
 
@@ -87,14 +109,14 @@ class UNet(nn.Module):
         return torch.cat([enc_feature, dec_feature], dim=1)
 
 
-def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
+def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_path=None):
     """Train function."""
     #log_frequency = 1
     val_frequency = 1
 
     num_epochs = 200
-    lr = 0.0001
-    train_batch_size = 4
+    lr = 0.001
+    train_batch_size = 1
     val_batch_size = 1
 
     print(f"[INFO]: Number of training epochs: {num_epochs}")
@@ -105,6 +127,13 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
 
     train_dataset = ETHMugsDataset(root_dir=train_data_root, mode='train')
+    train_dataset.transform = transforms.Compose([
+        #transforms.RandomRotation(15),
+        transforms.RandomHorizontalFlip(0.2),
+        transforms.RandomVerticalFlip(0.2),
+        #transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.ToTensor()
+    ])
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True)
     val_dataset = ETHMugsDataset(root_dir=val_data_root, mode='val')
     val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=True, pin_memory=True)
@@ -115,10 +144,20 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     weight = torch.tensor([5.0], device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=weight)
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+    #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
+
+    start_epoch = 0
+    # if checkpoint_path!=None:
+    #     checkpoint = torch.load(checkpoint_path)
+    #     model.load_state_dict(checkpoint['model_state_dict'])
+    #     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    #     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    #     start_epoch = checkpoint['epoch']
+    #     print(f"[INFO]: Loaded checkpoint '{checkpoint_path}' (epoch {start_epoch})")
 
     print("[INFO]: Starting training...")
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         model.train()
 
         epoch_loss = 0
@@ -145,10 +184,16 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 #print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()}")
 
 
-        scheduler.step()
+        scheduler.step(epoch_loss)
 
         print(f"Epoch {epoch+1}, Average Loss: {epoch_loss / len(train_dataloader)}")
-        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"epoch_{epoch+1}.pth"))
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'loss': epoch_loss / len(train_dataloader),
+        }, os.path.join(ckpt_dir, f"epoch_{epoch + 1}.pth"))
 
         if (epoch + 1) % val_frequency == 0:
             model.eval()
@@ -169,7 +214,7 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                     
                     val_output = torch.sigmoid(val_output.float())  # Apply sigmoid to the output
                     encoder_shades2 = val_output
-                    val_output = (val_output > 0.7).float()  # Threshold to obtain binary mask
+                    val_output = (val_output > 0.75).float()  # Threshold to obtain binary mask
                     
                     # Ensure consistent binary mask (Forground and Background were inverted)
                     if val_output.mean() > 0.5:  # If more than half of the values are 1
@@ -214,8 +259,9 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 axes[1,3].imshow(o[3,:,:], cmap='gray')
                 axes[1,3].axis("off")
                 axes[1,3].set_title("o3")
-                plt.show()
-                input()
+                #plt.show()
+                plt.savefig(os.path.join(ckpt_dir, f"validation_img_epoch_{epoch}" + f"IoU_{val_iou:.2f}" + f".jpg"))
+                #input()
 
 
 if __name__ == "__main__":
@@ -231,6 +277,11 @@ if __name__ == "__main__":
         default="./checkpoints",
         help="Path to save the model checkpoints to.",
     )
+    parser.add_argument(
+        "--checkpoint_path",
+        default="./checkpoints",
+        help="Path to checkpoint",
+    )
     args = parser.parse_args()
 
     now = datetime.now()
@@ -245,4 +296,6 @@ if __name__ == "__main__":
     val_data_root = os.path.join(args.data_root, "public_test_images_378_252")
     print(f"[INFO]: Validation data root: {val_data_root}")
 
-    train(ckpt_dir, train_data_root, val_data_root)
+
+
+    train(ckpt_dir, train_data_root, val_data_root, args.checkpoint_path)

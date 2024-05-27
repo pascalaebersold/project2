@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from eth_mugs_dataset import ETHMugsDataset
-from experimental import UNet
+from train import UNet
 from utils import IMAGE_SIZE, load_mask, compute_iou
 
 import numpy as np
@@ -55,7 +55,10 @@ if __name__ == "__main__":
 
     # Load pre-trained model
     print(f"[INFO]: Loading the pre-trained model: {args.ckpt}")
-    model.load_state_dict(torch.load(args.ckpt, map_location="cpu"))
+    #model.load_state_dict(torch.load(args.ckpt, map_location="cpu"))
+
+    checkpoint = torch.load(args.ckpt, map_location="cpu")
+    model.load_state_dict(checkpoint['model_state_dict'])
 
     model.to(device)
     model.eval()
@@ -86,7 +89,7 @@ if __name__ == "__main__":
             test_output = torch.sigmoid(test_output.float())  # Apply sigmoid to the output
             
             encoder_shades2 = test_output
-            test_output = (test_output > 0.5).float()  # Threshold to obtain binary mask
+            test_output = (test_output > 0.99).float()  # Threshold to obtain binary mask
             
             # Ensure consistent binary mask (Forground and Background were inverted)
             if test_output.mean() > 0.5:  # If more than half of the values are 1
@@ -124,7 +127,7 @@ if __name__ == "__main__":
             # All values are 0 or 1, dtype: int
             pred_mask = load_mask(pred_mask_path)
 
-            iou = compute_iou(pred_mask, gt_mask)
+            iou = compute_iou(pred_mask.squeeze().astype(int), gt_mask.squeeze().astype(int))
             test_iou_sum += iou
 
         average_test_iou = test_iou_sum / num_samples_to_evaluate

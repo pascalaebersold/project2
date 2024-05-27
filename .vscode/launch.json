@@ -17,8 +17,16 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": ["--data_root", "datasets", "--split", "public_test", "--ckpt", "checkpoints/2024-05-22-09-34-34/epoch_40.pth"],
+            "args": ["--data_root", "datasets", "--split", "public_test", "--ckpt", "checkpoints/2024-05-26-19-21-26/epoch_56.pth"],
             "console": "integratedTerminal"
-        }
+        },
+        {
+            "name": "Python Debugger: train ckpt",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "args": ["--data_root", "datasets", "--ckpt_dir", "checkpoints", "--checkpoint_path", "checkpoints/2024-05-26-19-21-26/epoch_56.pth"],
+            "console": "integratedTerminal"
+        },
     ]
 }
