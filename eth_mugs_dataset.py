@@ -59,7 +59,7 @@ class ETHMugsDataset(Dataset):
         # Load image
         img_name = self.image_paths[idx]
         img_path = os.path.join(self.rgb_dir, img_name)
-        image = Image.open(img_path).convert("RGB")
+        image = Image.open(img_path).convert("L")
         # Apply transformations
         image = self.transform(image)
 
