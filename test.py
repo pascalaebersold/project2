@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from eth_mugs_dataset import ETHMugsDataset
-from train import UNet
+from experimental import UNet
 from utils import IMAGE_SIZE, load_mask, compute_iou
 
 import numpy as np
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     # Build Model
-    model = UNet(num_classes=4)
+    model = UNet(num_classes=1)
 
     # Load pre-trained model
     print(f"[INFO]: Loading the pre-trained model: {args.ckpt}")
@@ -78,22 +78,10 @@ if __name__ == "__main__":
 
             # TODO: Forward pass
             test_output = model(test_image)
-
-            # Save the predicted mask
-            test_output = F.interpolate(test_output, size=(252, 378), mode='bilinear', align_corners=False)
-            top2_vals, top2_indices = torch.topk(test_output, 2, dim=1)
-
-            # Combine the top 2 channels using their values
-            test_output = (top2_vals[:, 0, :, :] + top2_vals[:, 1, :, :]) / 2.0
             
             test_output = torch.sigmoid(test_output.float())  # Apply sigmoid to the output
             
-            encoder_shades2 = test_output
-            test_output = (test_output > 0.99).float()  # Threshold to obtain binary mask
-            
-            # Ensure consistent binary mask (Forground and Background were inverted)
-            if test_output.mean() > 0.5:  # If more than half of the values are 1
-                test_output = 1 - test_output  # Invert the mask
+            test_output = (test_output > 0.75).float()  # Threshold to obtain binary mask
 
             test_output = test_output.cpu().detach().numpy().squeeze().astype(np.uint8) * 255
             

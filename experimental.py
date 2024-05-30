@@ -14,110 +14,119 @@ from utils import compute_iou
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-
-class DepthwiseSeparableConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(DepthwiseSeparableConv, self).__init__()
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, groups=in_channels)
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+class VGGBlock(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels):
+        super().__init__()
+        self.relu = nn.LeakyReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_channels, middle_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(middle_channels)
+        self.conv2 = nn.Conv2d(middle_channels, out_channels, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(middle_channels, out_channels, 3, padding=1)
+        self.bn3 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
-        x = self.depthwise(x)
-        x = self.pointwise(x)
-        return x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.relu(out)
+
+        return out
+
 
 class UNet(nn.Module):
-    def __init__(self, num_classes):
-        super(UNet, self).__init__()
-        self.encoder1 = self.conv_block(3, 64)
-        self.encoder2 = self.conv_block(64, 128)
-        self.encoder3 = self.conv_block(128, 256)
-        self.encoder4 = self.conv_block(256, 512)
-        self.encoder5 = self.conv_block(512, 1024)
+    def __init__(self, num_classes, input_channels=1, deep_supervision=False, **kwargs):
+        super().__init__()
 
-        self.bottleneck = self.conv_block(1024, 2048)
+        nb_filter = [32, 64, 128, 256, 512]
 
-        self.up_conv5 = self.up_conv(2048, 1024)
-        self.decoder5 = self.conv_block(2048, 1024)
-        self.up_conv4 = self.up_conv(1024, 512)
-        self.decoder4 = self.conv_block(1024, 512)
-        self.up_conv3 = self.up_conv(512, 256)
-        self.decoder3 = self.conv_block(512, 256)
-        self.up_conv2 = self.up_conv(256, 128)
-        self.decoder2 = self.conv_block(256, 128)
-        self.up_conv1 = self.up_conv(128, 64)
-        self.decoder1 = self.conv_block(128, 64)
+        self.deep_supervision = deep_supervision
 
-        self.final_conv = nn.Conv2d(64, num_classes, kernel_size=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-    def conv_block(self, in_channels, out_channels):
-        return nn.Sequential(
-            DepthwiseSeparableConv(in_channels, out_channels),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(out_channels, out_channels),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(out_channels, out_channels),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
+        self.conv0_0 = VGGBlock(input_channels, nb_filter[0], nb_filter[0])
+        self.conv1_0 = VGGBlock(nb_filter[0], nb_filter[1], nb_filter[1])
+        self.conv2_0 = VGGBlock(nb_filter[1], nb_filter[2], nb_filter[2])
+        self.conv3_0 = VGGBlock(nb_filter[2], nb_filter[3], nb_filter[3])
+        self.conv4_0 = VGGBlock(nb_filter[3], nb_filter[4], nb_filter[4])
 
-    def up_conv(self, in_channels, out_channels):
-        return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        self.conv0_1 = VGGBlock(nb_filter[0]+nb_filter[1], nb_filter[0], nb_filter[0])
+        self.conv1_1 = VGGBlock(nb_filter[1]+nb_filter[2], nb_filter[1], nb_filter[1])
+        self.conv2_1 = VGGBlock(nb_filter[2]+nb_filter[3], nb_filter[2], nb_filter[2])
+        self.conv3_1 = VGGBlock(nb_filter[3]+nb_filter[4], nb_filter[3], nb_filter[3])
 
-    def forward(self, x):
-        # Encoder
-        enc1 = self.encoder1(x)
-        enc2 = self.encoder2(self.maxpool(enc1))
-        enc3 = self.encoder3(self.maxpool(enc2))
-        enc4 = self.encoder4(self.maxpool(enc3))
-        enc5 = self.encoder5(self.maxpool(enc4))
+        self.conv0_2 = VGGBlock(nb_filter[0]*2+nb_filter[1], nb_filter[0], nb_filter[0])
+        self.conv1_2 = VGGBlock(nb_filter[1]*2+nb_filter[2], nb_filter[1], nb_filter[1])
+        self.conv2_2 = VGGBlock(nb_filter[2]*2+nb_filter[3], nb_filter[2], nb_filter[2])
 
-        # Bottleneck
-        bottleneck = self.bottleneck(self.maxpool(enc5))
+        self.conv0_3 = VGGBlock(nb_filter[0]*3+nb_filter[1], nb_filter[0], nb_filter[0])
+        self.conv1_3 = VGGBlock(nb_filter[1]*3+nb_filter[2], nb_filter[1], nb_filter[1])
 
-        # Decoder
-        dec5 = self.up_conv5(bottleneck)
-        dec5 = self.crop_and_concat(enc5, dec5)
-        dec5 = self.decoder5(dec5)
+        self.conv0_4 = VGGBlock(nb_filter[0]*4+nb_filter[1], nb_filter[0], nb_filter[0])
 
-        dec4 = self.up_conv4(dec5)
-        dec4 = self.crop_and_concat(enc4, dec4)
-        dec4 = self.decoder4(dec4)
-
-        dec3 = self.up_conv3(dec4)
-        dec3 = self.crop_and_concat(enc3, dec3)
-        dec3 = self.decoder3(dec3)
-
-        dec2 = self.up_conv2(dec3)
-        dec2 = self.crop_and_concat(enc2, dec2)
-        dec2 = self.decoder2(dec2)
-
-        dec1 = self.up_conv1(dec2)
-        dec1 = self.crop_and_concat(enc1, dec1)
-        dec1 = self.decoder1(dec1)
-
-        return self.final_conv(dec1)
-
-    def maxpool(self, x):
-        return nn.MaxPool2d(kernel_size=2, stride=2)(x)
-
-    def crop_and_concat(self, enc_feature, dec_feature):
-        _, _, H, W = dec_feature.size()
-        enc_feature = transforms.functional.center_crop(enc_feature, [H, W])
-        return torch.cat([enc_feature, dec_feature], dim=1)
+        if self.deep_supervision:
+            self.final1 = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
+            self.final2 = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
+            self.final3 = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
+            self.final4 = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
+        else:
+            self.final = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
 
 
-def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_path=None):
+    def forward(self, input):
+        x0_0 = self.conv0_0(input)
+        x1_0 = self.conv1_0(self.pool(x0_0))
+        x0_1 = self.conv0_1(torch.cat([x0_0, self.up(x1_0)], 1))
+
+        x2_0 = self.conv2_0(self.pool(x1_0))
+        x2_0 = self.up(x2_0)
+        x2_0 = nn.functional.interpolate(x2_0, size=[x2_0.shape[2],x1_0.shape[3]])
+        x1_1 = self.conv1_1(torch.cat([x1_0, x2_0], 1))
+        x0_2 = self.conv0_2(torch.cat([x0_0, x0_1, self.up(x1_1)], 1))
+
+        x3_0 = self.conv3_0(self.pool(x2_0))
+        x3_0 = self.up(x3_0)
+        x3_0 = nn.functional.interpolate(x3_0, size=[x3_0.shape[2],x2_0.shape[3]])
+        x2_1 = self.conv2_1(torch.cat([x2_0, x3_0], 1))
+        x1_2 = self.conv1_2(torch.cat([x1_0, x1_1, x2_1], 1))
+        x0_3 = self.conv0_3(torch.cat([x0_0, x0_1, x0_2, self.up(x1_2)], 1))
+
+        x4_0 = self.conv4_0(self.pool(x3_0))
+        x4_0 = self.up(x4_0)
+        x4_0 = nn.functional.interpolate(x4_0, size=[x4_0.shape[2],x3_0.shape[3]])
+        x3_1 = self.conv3_1(torch.cat([x3_0, x4_0], 1))
+        x2_2 = self.conv2_2(torch.cat([x2_0, x2_1, x3_1], 1))
+        x1_3 = self.conv1_3(torch.cat([x1_0, x1_1, x1_2, x2_2], 1))
+        x0_4 = self.conv0_4(torch.cat([x0_0, x0_1, x0_2, x0_3, self.up(x1_3)], 1))
+
+        if self.deep_supervision:
+            output1 = self.final1(x0_1)
+            output2 = self.final2(x0_2)
+            output3 = self.final3(x0_3)
+            output4 = self.final4(x0_4)
+            return [output1, output2, output3, output4]
+
+        else:
+            output = self.final(x0_4)
+            return output
+
+def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_path: str):
     """Train function."""
     #log_frequency = 1
     val_frequency = 1
 
     num_epochs = 200
-    lr = 0.001
-    train_batch_size = 1
-    val_batch_size = 1
+    lr = 0.0001
+    train_batch_size = 6
+    val_batch_size = 2
 
     print(f"[INFO]: Number of training epochs: {num_epochs}")
     print(f"[INFO]: Learning rate: {lr}")
@@ -127,34 +136,34 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_pa
 
 
     train_dataset = ETHMugsDataset(root_dir=train_data_root, mode='train')
-    train_dataset.transform = transforms.Compose([
-        #transforms.RandomRotation(15),
-        transforms.RandomHorizontalFlip(0.2),
-        transforms.RandomVerticalFlip(0.2),
-        #transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        transforms.ToTensor()
-    ])
+    # train_dataset.transform = transforms.Compose([
+    #     #transforms.RandomRotation(15),
+    #     transforms.RandomHorizontalFlip(0.2),
+    #     transforms.RandomVerticalFlip(0.2),
+    #     #transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    #     transforms.ToTensor()
+    # ])
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True)
     val_dataset = ETHMugsDataset(root_dir=val_data_root, mode='val')
     val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=True, pin_memory=True)
 
-    model = UNet(num_classes=4)
+    model = UNet(num_classes=1)
     model.to(device)
 
     weight = torch.tensor([5.0], device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=weight)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=4)
 
     start_epoch = 0
-    # if checkpoint_path!=None:
-    #     checkpoint = torch.load(checkpoint_path)
-    #     model.load_state_dict(checkpoint['model_state_dict'])
-    #     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    #     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    #     start_epoch = checkpoint['epoch']
-    #     print(f"[INFO]: Loaded checkpoint '{checkpoint_path}' (epoch {start_epoch})")
+    if checkpoint_path!=None:
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch']
+        print(f"[INFO]: Loaded checkpoint '{checkpoint_path}' (epoch {start_epoch})")
 
     print("[INFO]: Starting training...")
     for epoch in range(start_epoch, num_epochs):
@@ -167,11 +176,6 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_pa
             optimizer.zero_grad()
 
             output = model(image)
-            output = nn.functional.interpolate(output, size=(252, 378), mode='bilinear', align_corners=False)
-            #print(output.shape, type)
-            #print(gt_mask.shape, type(gt_mask))
-            #output = (output>0.25).float()
-            #gt_mask = gt_mask.unsqueeze(1).float()
 
             loss = criterion(torch.mean(output, dim=1), gt_mask)
 
@@ -203,22 +207,10 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_pa
                 for val_image, val_gt_mask in val_dataloader:
                     val_image, val_gt_mask = val_image.to(device), val_gt_mask.to(device)
                     val_output = model(val_image)
-                    val_output = nn.functional.interpolate(val_output, size=(252, 378), mode='bilinear', align_corners=False)
-                    #val_output = torch.argmax(val_output, dim=1, keepdim=True) # take the maximum value of the 4 Matrixes and put it in a new one to reduce to one dim.
-                    # Get the top 2 channels for each pixel
-                    o = val_output
-
-                    top2_vals, top2_indices = torch.topk(val_output, 2, dim=1)
-                    # Combine the top 2 channels using their values
-                    val_output = (top2_vals[:, 0, :, :] + top2_vals[:, 1, :, :]) / 2.0
                     
                     val_output = torch.sigmoid(val_output.float())  # Apply sigmoid to the output
-                    encoder_shades2 = val_output
-                    val_output = (val_output > 0.75).float()  # Threshold to obtain binary mask
-                    
-                    # Ensure consistent binary mask (Forground and Background were inverted)
-                    if val_output.mean() > 0.5:  # If more than half of the values are 1
-                        val_output = 1 - val_output  # Invert the mask
+
+                    val_output = (val_output > 0.85).float()  # Threshold to obtain binary mask
 
 
                     val_iou += compute_iou(val_output.cpu().numpy().squeeze().astype(int), val_gt_mask.cpu().numpy().squeeze().astype(int))
@@ -227,41 +219,22 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_pa
                 print(f"[INFO]: Validation IoU: {val_iou:.2f}")
 
                 # Visualization
-                fig, axes = plt.subplots(2, 4, figsize=(12, 3))
-                image = val_image.squeeze().permute(1, 2, 0).cpu().numpy()
+                fig, axes = plt.subplots(1, 3, figsize=(12, 3))
+                image = val_image.squeeze().cpu().numpy()
                 mask = val_gt_mask.squeeze().cpu().numpy()
                 output = val_output.squeeze().cpu().numpy()
-                o = o.squeeze().cpu().numpy()
-                encoder_shades2 = encoder_shades2.squeeze().cpu().numpy()
 
-                axes[0,0].imshow(mask, cmap='gray')
-                axes[0,0].axis("off")
-                axes[0,0].set_title("Mask")
-                axes[0,1].imshow(image)
-                axes[0,1].axis("off")
-                axes[0,1].set_title("Image")
-                axes[0,2].imshow(output, cmap='gray')
-                axes[0,2].axis("off")
-                axes[0,2].set_title("Output")
-                axes[0,3].imshow(encoder_shades2, cmap='tab10')
-                axes[0,3].axis("off")
-                axes[0,3].set_title("Shades")
+                axes[0].imshow(mask, cmap='gray')
+                axes[0].axis("off")
+                axes[0].set_title("Mask")
+                axes[1].imshow(image)
+                axes[1].axis("off")
+                axes[1].set_title("Image")
+                axes[2].imshow(output, cmap='gray')
+                axes[2].axis("off")
+                axes[2].set_title("Output")
 
-                axes[1,0].imshow(o[0,:,:], cmap='gray')
-                axes[1,0].axis("off")
-                axes[1,0].set_title("o0")
-                axes[1,1].imshow(o[1,:,:], cmap='gray')
-                axes[1,1].axis("off")
-                axes[1,1].set_title("o1")
-                axes[1,2].imshow(o[2,:,:], cmap='gray')
-                axes[1,2].axis("off")
-                axes[1,2].set_title("o2")
-                axes[1,3].imshow(o[3,:,:], cmap='gray')
-                axes[1,3].axis("off")
-                axes[1,3].set_title("o3")
-                #plt.show()
                 plt.savefig(os.path.join(ckpt_dir, f"validation_img_epoch_{epoch}" + f"IoU_{val_iou:.2f}" + f".jpg"))
-                #input()
 
 
 if __name__ == "__main__":

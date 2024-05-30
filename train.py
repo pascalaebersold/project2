@@ -54,13 +54,13 @@ class UNet(nn.Module):
         return nn.Sequential(
             DepthwiseSeparableConv(in_channels, out_channels),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             DepthwiseSeparableConv(out_channels, out_channels),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             DepthwiseSeparableConv(out_channels, out_channels),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
+            nn.LeakyReLU(inplace=True)
         )
 
     def up_conv(self, in_channels, out_channels):
@@ -117,7 +117,7 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str, checkpoint_pa
     num_epochs = 200
     lr = 0.0001
     train_batch_size = 4
-    val_batch_size = 4
+    val_batch_size = 2
 
     print(f"[INFO]: Number of training epochs: {num_epochs}")
     print(f"[INFO]: Learning rate: {lr}")
